@@ -215,6 +215,17 @@ aws ec2 run-instances --image-id ami-xxx \
 
 ---
 
+## Approche 3 : Outils cloud-spécifiques
+
+**CloudFormation (AWS), ARM Templates / Bicep (Azure)**
+
+**Problèmes :**
+- ❌ Verrouillage fournisseur
+- ❌ Limité à un seul cloud
+- ❌ Syntaxe JSON/YAML complexe
+
+---
+
 ## Solution Terraform (déclarative)
 
 ```hcl
@@ -248,17 +259,6 @@ resource "aws_instance" "web" {
 - ✅ Documenté dans le code
 - ✅ Scalable (1 ou 100 instances)
 - ✅ Outils qui analysent le code terraform
-
----
-
-## Approche 3 : Outils cloud-spécifiques
-
-**CloudFormation (AWS), ARM Templates / Bicep (Azure)**
-
-**Problèmes :**
-- ❌ Verrouillage fournisseur
-- ❌ Limité à un seul cloud
-- ❌ Syntaxe JSON/YAML complexe
 
 ---
 
