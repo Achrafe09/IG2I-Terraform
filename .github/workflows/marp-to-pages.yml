@@ -23,6 +23,8 @@ concurrency:
 
 jobs:
   build:
+    # Pages is enabled only on the public student mirror; skip in the private source repository
+    if: github.repository == 'frederictriquet/IG2I-Terraform'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
