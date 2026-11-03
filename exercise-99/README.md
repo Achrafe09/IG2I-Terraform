@@ -2,123 +2,17 @@
 
 ## Introduction
 
-Ce document n'est pas un exercice pratique traditionnel, mais plutôt un guide de référence sur des concepts avancés de Terraform non couverts dans les exercices 01 à 07.
+Ce document n'est pas un exercice pratique traditionnel, mais plutôt un guide de référence sur des concepts avancés de Terraform.
 
-Ces sujets dépassent le cadre de cette formation introductive, mais sont essentiels pour une utilisation professionnelle de Terraform. Consultez cette ressource lorsque vous avez du temps libre ou lorsque vous rencontrez ces besoins dans vos projets réels.
+Les exercices 08 à 11 reprennent la mise en pratique des modules, des workspaces, du remote state et de `terraform import`. Ce guide en garde le complément (modules distants, backend partiel, lecture d'un autre state, workspaces face aux répertoires, blocs `import`, Terraformer), puis les autres sujets : fonctions, provisioners, Ansible, tests, outils.
+
+Ces sujets dépassent le cadre de la formation introductive, mais sont essentiels pour une utilisation professionnelle de Terraform. Consultez cette ressource lorsque vous avez du temps libre ou lorsque vous rencontrez ces besoins dans vos projets réels.
 
 ---
 
 ## 1. Modules pour l'infrastructure réutilisable
 
-### Quand utiliser ?
-
-- Créer des composants d'infrastructure réutilisables (ex: "module bucket S3 standard")
-- Standardiser les configurations dans une équipe
-- Partager des patterns d'infrastructure entre projets
-- Encapsuler la complexité
-
-### Concepts clés
-
-Structure d'un module :
-
-```
-modules/
-└── s3-bucket/
-    ├── main.tf       # Ressources du module
-    ├── variables.tf  # Inputs du module
-    ├── outputs.tf    # Outputs du module
-    └── README.md     # Documentation
-```
-
-Exemple de module simple :
-
-```hcl
-# modules/s3-bucket/variables.tf
-variable "bucket_name" {
-  description = "Nom du bucket S3"
-  type        = string
-}
-
-variable "versioning_enabled" {
-  description = "Activer le versioning"
-  type        = bool
-  default     = false
-}
-
-variable "tags" {
-  description = "Tags à appliquer"
-  type        = map(string)
-  default     = {}
-}
-
-# modules/s3-bucket/main.tf
-resource "aws_s3_bucket" "this" {
-  bucket = var.bucket_name
-  tags   = var.tags
-}
-
-resource "aws_s3_bucket_versioning" "this" {
-  count  = var.versioning_enabled ? 1 : 0
-  bucket = aws_s3_bucket.this.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "this" {
-  bucket = aws_s3_bucket.this.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# modules/s3-bucket/outputs.tf
-output "bucket_id" {
-  description = "ID du bucket créé"
-  value       = aws_s3_bucket.this.id
-}
-
-output "bucket_arn" {
-  description = "ARN du bucket créé"
-  value       = aws_s3_bucket.this.arn
-}
-```
-
-Utilisation du module :
-
-```hcl
-# main.tf
-module "logs_bucket" {
-  source = "./modules/s3-bucket"
-
-  bucket_name        = "my-logs-bucket"
-  versioning_enabled = false
-
-  tags = {
-    Purpose     = "Logs"
-    Environment = "production"
-  }
-}
-
-module "backups_bucket" {
-  source = "./modules/s3-bucket"
-
-  bucket_name        = "my-backups-bucket"
-  versioning_enabled = true
-
-  tags = {
-    Purpose     = "Backups"
-    Environment = "production"
-  }
-}
-
-output "logs_bucket_arn" {
-  value = module.logs_bucket.bucket_arn
-}
-```
+La mise en pratique (module local `s3-bucket`, deux appels, outputs) est l'[exercice 08](../exercise-08/README.md).
 
 ### Modules distants
 
@@ -138,13 +32,7 @@ module "custom" {
 }
 ```
 
-### Bonnes pratiques
-
-1. **Un module = un objectif** : Ne créez pas de modules "fourre-tout"
-2. **Documentation** : Documentez tous les inputs, outputs et exemples
-3. **Versioning** : Utilisez des versions spécifiques pour les modules distants
-4. **Tests** : Testez vos modules avec différentes configurations
-5. **Outputs explicites** : N'exposez que les outputs nécessaires
+`version` (registry) et `ref` (Git) fixent la version du module.
 
 ### Ressources
 
@@ -156,81 +44,7 @@ module "custom" {
 
 ## 2. Remote State avec backend S3
 
-### Quand utiliser ?
-
-- **Toujours en production** et pour tout travail en équipe
-- Pour protéger le state avec du chiffrement
-- Pour éviter les modifications concurrentes avec le locking
-- Pour avoir un backup automatique du state
-
-### Concepts clés
-
-Configuration du backend S3 :
-
-```hcl
-# backend.tf
-terraform {
-  backend "s3" {
-    bucket         = "my-terraform-state-bucket"
-    key            = "project/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "terraform-state-lock"
-  }
-}
-```
-
-Création de l'infrastructure pour le backend :
-
-```hcl
-# bootstrap/main.tf - À exécuter une seule fois
-resource "aws_s3_bucket" "terraform_state" {
-  bucket = "my-terraform-state-bucket"
-
-  lifecycle {
-    prevent_destroy = true  # Protection contre la suppression accidentelle
-  }
-}
-
-resource "aws_s3_bucket_versioning" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-resource "aws_dynamodb_table" "terraform_lock" {
-  name           = "terraform-state-lock"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "LockID"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
-}
-```
-
-Migration du state local vers S3 :
-
-```bash
-# 1. Ajouter la configuration backend dans backend.tf
-# 2. Réinitialiser Terraform
-terraform init -migrate-state
-
-# Terraform demandera confirmation pour migrer le state
-```
+La mise en pratique (bucket de state, verrouillage, `terraform init -migrate-state`) est l'[exercice 10](../exercise-10/README.md).
 
 ### Backend partiel (recommandé pour plusieurs environnements)
 
@@ -239,9 +53,9 @@ terraform init -migrate-state
 terraform {
   backend "s3" {
     # Valeurs communes
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "terraform-state-lock"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
 
     # bucket et key seront fournis lors de l'init
   }
@@ -285,13 +99,6 @@ resource "aws_instance" "web" {
 }
 ```
 
-### Points d'attention
-
-- Le bucket et la table DynamoDB doivent être créés **avant** de configurer le backend
-- Ne jamais commiter le fichier `terraform.tfstate` dans Git une fois le backend configuré
-- Le state lock empêche deux personnes de modifier l'infrastructure simultanément
-- En cas de lock bloqué : `terraform force-unlock <LOCK_ID>`
-
 ### Ressources
 
 - [Backend S3](https://developer.hashicorp.com/terraform/language/settings/backends/s3)
@@ -301,72 +108,7 @@ resource "aws_instance" "web" {
 
 ## 3. Workspaces pour gérer plusieurs environnements
 
-### Quand utiliser ?
-
-- Pour gérer plusieurs environnements (dev, staging, prod) avec le même code
-- Quand les environnements sont **très similaires** (même structure, paramètres différents)
-- Alternative aux répertoires séparés pour les petits projets
-
-### Concepts clés
-
-```bash
-# Lister les workspaces
-terraform workspace list
-
-# Créer un nouveau workspace
-terraform workspace new dev
-terraform workspace new staging
-terraform workspace new prod
-
-# Changer de workspace
-terraform workspace select dev
-
-# Afficher le workspace actuel
-terraform workspace show
-```
-
-Utiliser le workspace dans le code :
-
-```hcl
-# Nommer les ressources selon l'environnement
-resource "aws_s3_bucket" "data" {
-  bucket = "my-app-${terraform.workspace}-data"
-
-  tags = {
-    Environment = terraform.workspace
-  }
-}
-
-# Configurations différentes par environnement
-locals {
-  instance_types = {
-    dev     = "t2.micro"
-    staging = "t3.small"
-    prod    = "t3.large"
-  }
-
-  instance_type = local.instance_types[terraform.workspace]
-}
-
-resource "aws_instance" "web" {
-  instance_type = local.instance_type
-}
-
-# Avec des variables
-variable "instance_counts" {
-  type = map(number)
-  default = {
-    dev     = 1
-    staging = 2
-    prod    = 5
-  }
-}
-
-resource "aws_instance" "app" {
-  count         = var.instance_counts[terraform.workspace]
-  instance_type = local.instance_type
-}
-```
+La mise en pratique (workspaces `dev`, `staging`, `prod`, nom et paramètres selon `terraform.workspace`) est l'[exercice 09](../exercise-09/README.md).
 
 ### Workspaces avec remote state
 
@@ -691,83 +433,13 @@ resource "aws_instance" "app" {
 
 ## 5. Import de ressources existantes
 
-### Quand utiliser ?
+La mise en pratique (`terraform import` d'un bucket S3 créé hors de Terraform) est l'[exercice 11](../exercise-11/README.md).
 
-- Reprendre le contrôle de ressources créées manuellement via la console AWS
-- Migrer une infrastructure existante vers Terraform
-- Récupérer après une perte du state file
-- Intégrer des ressources créées par d'autres outils
+### Blocs import
 
-### Concepts clés
-
-Processus d'import en 3 étapes :
-
-#### 1. Écrire la configuration Terraform
+Le bloc `import` remplace la commande : l'import passe par `plan` et `apply`, et se relit dans le code.
 
 ```hcl
-# On veut importer un bucket S3 existant nommé "my-existing-bucket"
-resource "aws_s3_bucket" "imported" {
-  bucket = "my-existing-bucket"
-
-  # Autres attributs seront ajustés après l'import
-}
-```
-
-#### 2. Importer la ressource dans le state
-
-```bash
-# Syntaxe : terraform import <resource_type>.<name> <id_aws>
-terraform import aws_s3_bucket.imported my-existing-bucket
-```
-
-#### 3. Ajuster la configuration pour correspondre à la réalité
-
-```bash
-# Voir les différences
-terraform plan
-
-# La configuration doit correspondre EXACTEMENT à la ressource existante
-# Sinon Terraform voudra modifier la ressource
-```
-
-### Exemple complet : importer un bucket S3
-
-```bash
-# 1. Le bucket existe déjà dans AWS : "my-old-bucket"
-
-# 2. Créer la configuration de base
-cat > import.tf <<EOF
-resource "aws_s3_bucket" "legacy" {
-  bucket = "my-old-bucket"
-}
-EOF
-
-# 3. Importer dans le state
-terraform import aws_s3_bucket.legacy my-old-bucket
-
-# 4. Voir ce que Terraform veut changer
-terraform plan
-
-# 5. Récupérer les attributs actuels
-terraform show
-
-# 6. Compléter la configuration pour qu'elle corresponde
-# (ajouter tags, versioning, etc. selon ce qui existe)
-
-# 7. Vérifier qu'il n'y a plus de changements
-terraform plan  # Doit afficher "No changes"
-```
-
-### Import avec Terraform 1.5+ (import blocks)
-
-Depuis Terraform 1.5, une nouvelle syntaxe déclarative est disponible :
-
-```hcl
-# Configuration de la ressource
-resource "aws_s3_bucket" "imported" {
-  bucket = "my-existing-bucket"
-}
-
 # Bloc d'import déclaratif
 import {
   to = aws_s3_bucket.imported
@@ -775,14 +447,14 @@ import {
 }
 ```
 
-Exécution :
+Sans bloc `resource` correspondant, Terraform peut écrire la configuration lui-même :
 
 ```bash
 terraform plan -generate-config-out=generated.tf
 terraform apply
 ```
 
-Terraform génère automatiquement la configuration complète !
+`generated.tf` contient la ressource avec tous les attributs lus dans AWS. Relisez-le et nettoyez-le avant l'`apply`. Si le bloc `resource "aws_s3_bucket" "imported"` existe déjà dans la configuration, Terraform ne génère rien : il importe et compare, comme avec `terraform import`. Une fois l'import appliqué, le bloc `import` peut être retiré.
 
 ### Trouver l'ID de ressource à importer
 
@@ -829,14 +501,13 @@ terraformer import aws --resources=s3,ec2_instance,vpc --regions=us-east-1
 
 ### Limites de l'import
 
-- **Pas de génération automatique** (avant Terraform 1.5) : vous devez écrire la config manuellement
 - **Attributs par défaut** : certains attributs peuvent avoir des valeurs par défaut différentes
 - **Ressources imbriquées** : certaines ressources nécessitent plusieurs imports
 - **Pas de rollback** : l'import modifie le state, faites un backup avant !
 
 ### Bonnes pratiques
 
-1. **Backup du state** avant tout import : `cp terraform.tfstate terraform.tfstate.backup`
+1. **Backup du state** avant tout import : `cp terraform.tfstate terraform.tfstate.pre-import` (Terraform écrase `terraform.tfstate.backup` à chaque écriture du state)
 2. **Importer par petits groupes** : pas toute l'infra d'un coup
 3. **Utiliser des modules** pour organiser les ressources importées
 4. **Documenter** : noter quelles ressources ont été importées et pourquoi
@@ -845,7 +516,7 @@ terraformer import aws --resources=s3,ec2_instance,vpc --regions=us-east-1
 ### Ressources
 
 - [Import Command](https://developer.hashicorp.com/terraform/cli/commands/import)
-- [Import Blocks (Terraform 1.5+)](https://developer.hashicorp.com/terraform/language/import)
+- [Import blocks](https://developer.hashicorp.com/terraform/language/import)
 - [Terraformer](https://github.com/GoogleCloudPlatform/terraformer)
 
 ---
@@ -1008,14 +679,14 @@ resource "aws_instance" "web" {
 }
 ```
 
-### null_resource : provisioners sans ressource
+### terraform_data : provisioners sans ressource
 
-Utile pour des tâches qui ne sont pas liées à une ressource spécifique :
+Utile pour des tâches qui ne sont pas liées à une ressource spécifique. `terraform_data` est intégré à Terraform depuis la version 1.4 et remplace `null_resource`, qui demandait le provider `hashicorp/null`. Son argument `triggers_replace` remplace `triggers` :
 
 ```hcl
-resource "null_resource" "setup" {
+resource "terraform_data" "setup" {
   # Déclencheurs : re-exécute si ces valeurs changent
-  triggers = {
+  triggers_replace = {
     cluster_instance_ids = join(",", aws_instance.cluster[*].id)
     version              = var.app_version
   }
@@ -1085,8 +756,8 @@ resource "aws_instance" "web" {
 
 2. **Génération de fichiers de configuration** :
 ```hcl
-resource "null_resource" "generate_inventory" {
-  triggers = {
+resource "terraform_data" "generate_inventory" {
+  triggers_replace = {
     cluster_ids = join(",", aws_instance.cluster[*].id)
   }
 
@@ -1103,7 +774,7 @@ resource "null_resource" "generate_inventory" {
 
 3. **Attente ou vérifications** :
 ```hcl
-resource "null_resource" "wait_for_app" {
+resource "terraform_data" "wait_for_app" {
   provisioner "local-exec" {
     command = "until curl -f http://${aws_instance.web.public_ip}; do sleep 5; done"
   }
@@ -1209,9 +880,9 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 ### Approche 2 : Lancer Ansible automatiquement
 
 ```hcl
-resource "null_resource" "run_ansible" {
+resource "terraform_data" "run_ansible" {
   # Re-exécuter si l'inventaire change
-  triggers = {
+  triggers_replace = {
     inventory_content = local_file.ansible_inventory.content
   }
 
@@ -1507,7 +1178,7 @@ data "aws_ami" "selected" {
 }
 ```
 
-#### 4. Checks (Terraform 1.7+) (niveau 3)
+#### 4. Checks (niveau 3)
 
 ```hcl
 # Vérifications continues (ne bloquent pas apply)
@@ -1765,7 +1436,7 @@ Avant chaque release :
 | ------------------ | ------------------ | ----------------------- |
 | terraform fmt      | Formatage          | Intégré                 |
 | terraform validate | Validation syntaxe | Intégré                 |
-| terraform test     | Tests natifs       | Terraform 1.6+          |
+| terraform test     | Tests natifs       | Intégré                 |
 | tflint             | Linter avancé      | `brew install tflint`   |
 | checkov            | Scan de sécurité   | `pip install checkov`   |
 | tfsec              | Scan de sécurité   | `brew install tfsec`    |
@@ -1837,11 +1508,11 @@ Ces sujets avancés vous permettront de construire des infrastructures robustes,
 
 Si vous avez du temps libre, explorez dans cet ordre :
 
-1. **Modules** - Réutilisabilité et organisation
-2. **Remote State** - Essentiel pour le travail en équipe
+1. **Modules** - Exercice 08, puis les modules distants de la section 1
+2. **Remote State** - Exercice 10, puis le backend partiel et `terraform_remote_state` de la section 2
 3. **Structures de données complexes et fonctions** - Pour manipuler des configurations avancées
 4. **Tests et validation** - Qualité et fiabilité
-5. **Workspaces** - Gestion multi-environnement
+5. **Workspaces** - Exercice 09, puis la comparaison avec les répertoires de la section 3
 
 ### Ressources générales
 

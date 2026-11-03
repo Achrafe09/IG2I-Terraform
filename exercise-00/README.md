@@ -42,7 +42,7 @@ sudo yum -y install terraform
 ```bash
 terraform version
 ```
-   - Vous devriez voir la version de Terraform installée (par exemple : `Terraform v1.9.x`)
+   - Vous devriez voir la version de Terraform installée (par exemple : `Terraform v1.16.x`)
 
 ### Configuration de l'auto-complétion (optionnel mais recommandé)
 

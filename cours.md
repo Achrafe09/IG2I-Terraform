@@ -24,7 +24,7 @@ section::after {
 
 # Cours d'introduction à Terraform
 
-IG2I - 2025 - Frédéric Triquet
+IG2I - 2026 - Frédéric Triquet
 
 https://frederictriquet.github.io/IG2I-Terraform/
 
@@ -71,7 +71,7 @@ https://frederictriquet.github.io/IG2I-Terraform/
 
 ## Qu'est-ce que l'IaC ?
 
-L'Infrastructure en tant que Code est la pratique de gestion et d'approvisionnement de l'infrastructure via des fichiers lisibles par la machine.
+L'Infrastructure en tant que Code est la pratique de gestion et d'approvisionnement de l'infrastructure via des fichiers lisibles par la machine et les humains.
 
 <!--
 du code = des fichiers suffisamment simples pour être lus et écrits par l'Homme / suffisamment structurés pour être compris par la machine -->
@@ -112,10 +112,10 @@ au fil des ans : augmentation de la puissance et baisse des coûts
 
 **Années 2000-2010**
 - La taille des infrastructures augmente, les coûts baissent
-- Pas de cloud
+- Début du cloud public (AWS : S3 et EC2 en 2006)
 - Début de la virtualisation en prod
 - Pas de conteneurs
-- Outils : Puppet, Chef, Ansible
+- Outils : Puppet (2005), Chef (2009)
 - Automatisation de la configuration
 - Focus sur la configuration logicielle
 
@@ -126,10 +126,11 @@ au fil des ans : augmentation de la puissance et baisse des coûts
 
 **Années 2010-aujourd'hui**
 - Explosion de la taille des infrastructures
-- Début du cloud
-- Début des conteneurs
-- Les composants d'infrastructure (cloud) se diversifient
-- Outils : Terraform, CloudFormation
+- Début des conteneurs (Docker, 2013)
+- Le cloud public se généralise
+  - Les composants d'infrastructure se diversifient
+- Outils : CloudFormation (2011), Terraform (2014)
+- Gestion de configuration : Ansible (2012)
 - Cycle de vie complet de l'infrastructure
 
 ---
@@ -140,7 +141,7 @@ au fil des ans : augmentation de la puissance et baisse des coûts
 
 ## Vue d'ensemble
 
-**Terraform** est un outil d'_Infrastructure as Code_ open-source créé par HashiCorp.
+**Terraform** est un outil d'_Infrastructure as Code_ créé par HashiCorp, publié sous licence BSL depuis la version 1.6 (open source MPL auparavant).
 
 Il permet de définir des ressources cloud et on-premise dans des fichiers de configuration lisibles.
 
@@ -148,9 +149,9 @@ Il permet de définir des ressources cloud et on-premise dans des fichiers de co
 
 ## Caractéristiques clés
 
-- **Langage déclaratif** : Description du résultat final attendu
+- **Langage déclaratif** : Description du résultat final attendu (vs impératif)
 - **Agnostique du cloud** : Un seul outil pour AWS, Azure, GCP, etc.
-- **Gestion d'état** : L'état actuel de l'infrastructure est stocké dans une base de données
+- **Gestion d'état** : L'état actuel de l'infrastructure est stocké dans un fichier d'état (JSON)
 - **Planification** : Prévisualisation des modifications avant de les appliquer
 - **Gestion des dépendances** : Résolution automatique
 
@@ -206,7 +207,7 @@ aws ec2 run-instances --image-id ami-xxx \
 
 ## Problèmes des scripts shell
 
-- ❌ Modèle **Impératif** : Il faut spécifier chaque étape
+- ❌ Modèle **Impératif** : Il faut spécifier chaque étape (vs déclaratif)
 - ❌ Pas de gestion des dépendances : **dans le bon ordre**
 - ❌ Pas de gestion d'état : Une ré-exécution crée des doublons
 - ❌ Gestion d'erreurs complexe : Mon script échoue à la ligne 700... 😱😱😱
@@ -227,7 +228,7 @@ resource "aws_subnet" "public" {
 }
 
 resource "aws_instance" "web" {
-  ami           = "ami-0c55b159cbfafe1f0"
+  ami           = "ami-xxxxxxxx"
   instance_type = "t2.micro"
   subnet_id     = aws_subnet.public.id
 }
@@ -252,7 +253,7 @@ resource "aws_instance" "web" {
 
 ## Approche 3 : Outils cloud-spécifiques
 
-**CloudFormation (AWS), ARM Templates (Azure)**
+**CloudFormation (AWS), ARM Templates / Bicep (Azure)**
 
 **Problèmes :**
 - ❌ Verrouillage fournisseur
@@ -267,7 +268,8 @@ resource "aws_instance" "web" {
 on parle souvent de ces 2 outils
 on peut les confondre (quand on ne les connaît pas bien)
 
-points communs : IaC, HashiCorp
+points communs : IaC, open source
+Ansible = Red Hat, Terraform = HashiCorp
 -->
 ---
 
@@ -291,10 +293,11 @@ points communs : IaC, HashiCorp
   hosts: localhost
   tasks:
     - name: Create EC2 instance
-      ec2:
+      amazon.aws.ec2_instance:
+        name: my-instance
         key_name: mykey
         instance_type: t2.micro
-        image: ami-0c55b159cbfafe1f0
+        image_id: ami-xxxxxxxx
         region: us-east-1
 ```
 
@@ -353,8 +356,8 @@ Ansible → Configurer l'infrastructure
 ```
 
 Voir :
-- `null_resource`, `triggers`, `local-exec`.
-- Exercice 99 partie 7
+- `terraform_data`, `triggers_replace`, `local-exec`
+- Exercice 99 parties 6 et 7
 
 ---
 
@@ -377,6 +380,8 @@ ansible-playbook -i inventory.json configure.yml
 ---
 
 # 5. Concepts fondamentaux
+
+  Providers, resources, data sources, variables, outputs, state, idempotence
 
 ---
 
@@ -403,7 +408,7 @@ provider "google" {
 - **Conteneurs** : Kubernetes, Docker
 - **DevOps** : GitHub, GitLab
 - **Monitoring** : Datadog, PagerDuty
-- **Et plus de 2000 autres !**
+- **Et plus de 3000 autres** (Terraform Registry, chiffre de mai 2025)
 
 ---
 
@@ -425,7 +430,7 @@ Elles sont fournies par les providers.
 
 <pre>
 resource "<span class="highlight-red">aws_instance</span>" "<span class="highlight-blue">web</span>" {
-  ami           = "ami-0c55b159cbfafe1f0"
+  ami           = "ami-xxxxxxxx"
   instance_type = "t2.micro"
 
   tags = {
@@ -452,7 +457,7 @@ Récupérer et utiliser des informations sur des ressources existantes.
 
   filter {
     name   = "name"
-    values = ["amzn2-ami-hvm-*"]
+    values = ["al2023-ami-2023*-x86_64"]
   }
 }
 
@@ -487,7 +492,7 @@ variable "environment" {
 
 ```hcl
 resource "aws_instance" "web" {
-  ami           = "ami-0c55b159cbfafe1f0"
+  ami           = "ami-xxxxxxxx"
   instance_type = var.instance_type
 
   tags = {
@@ -541,9 +546,13 @@ instance_id = "i-0abcd1234efgh5678"
 
 ---
 
+<style scoped>
+section { font-size: 24px; }
+</style>
+
 ## State
 
-Le fichier `terraform.tfstate` est la base de données de Terraform :
+Le fichier `terraform.tfstate` est un fichier JSON qui joue le rôle de base de données de Terraform :
 - IDs des ressources
 - Configuration actuelle
 - Métadonnées et dépendances
@@ -562,14 +571,15 @@ Terraform :
 ## Emplacements du State
 
 - **Local** : Sur votre machine (défaut)
-- **Distant** : S3, Terraform Cloud (recommandé)
+- **Distant** : S3, HCP Terraform (anciennement Terraform Cloud) (recommandé)
 
 ```hcl
 terraform {
   backend "s3" {
-    bucket = "my-terraform-state"
-    key    = "prod/terraform.tfstate"
-    region = "us-east-1"
+    bucket       = "my-terraform-state"
+    key          = "prod/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
   }
 }
 ```
@@ -577,20 +587,33 @@ terraform {
 
 ---
 
+<style scoped>
+section { font-size: 24px; }
+</style>
+
 ## Sécurité du State
 
 ⚠️ **Considérations importantes :**
-- Contient des données sensibles - sécurisez-le !
+- Contient des données sensibles : sécurisez-le !
+- Un secret éphémère (`ephemeral = true` sur une variable) n'est écrit ni dans le plan ni dans le state. Il n'est utilisable que dans :
+  - un argument *write-only* (ex. `password_wo` sur `aws_db_instance`)
+  - la configuration d'un provider
+  - une ressource `ephemeral`
+- Un output éphémère n'est permis que dans un module enfant
 - Ne jamais l'éditer manuellement
 - Utiliser l'état distant pour la collaboration
 - Activer le verrouillage d'état
 
 <!--
-sur AWS le state locking se fait avec une base dynamoDB,
+sur AWS, use_lockfile = true dans le backend S3
 sur Azure le blob storage le gère tout seul, idem chez GCP
 -->
 
 ---
+
+<style scoped>
+section { font-size: 24px; }
+</style>
 
 ## Idempotence
 
@@ -604,8 +627,10 @@ $ terraform apply  # Aucun changement
 
 **Comment ça marche :**
 1. Lire l'état souhaité (`.tf`)
-2. Lire l'état actuel (`.tfstate`)
-3. Appliquer uniquement les différences
+2. Lire l'état enregistré (`.tfstate`)
+3. Interroger les APIs du provider pour connaître l'état réel (refresh), et mettre à jour le state
+4. Calculer les différences entre l'état souhaité et l'état réel
+5. Appliquer uniquement les différences
 
 ---
 
@@ -613,16 +638,21 @@ $ terraform apply  # Aucun changement
 
 https://github.com/frederictriquet/IG2I-Terraform
 
-- Exercices 0 à 7
+- Exercices 0 à 11
 - Exercice 99
 
 ---
 
+<style scoped>
+section { font-size: 24px; }
+</style>
+
 ## Un point sur l'organisation des fichiers
 
 - Il n'y a pas d'ordre à respecter (puisque c'est **déclaratif**)
-- Seule l'extension est vraiment importante (`.tf`)
-- Terraform lit tous les fichiers du répertoire courant, retrouve les providers déclarés, les définitions de variables, les `locals`, les ressources, les outputs, et construit un arbre de dépendances pour savoir dans quel ordre il faut procéder
+- Le nom du fichier compte peu, l'extension décide : `.tf` (ou `.tf.json`, même configuration écrite en JSON)
+- Exception : `override.tf` et `*_override.tf` sont traités à part, leurs blocs fusionnent avec les définitions des autres fichiers et les écrasent
+- Terraform lit tous les fichiers `.tf` du répertoire courant, **sans descendre dans les sous-répertoires** (ils ne sont pris en compte que s'ils sont appelés comme modules). Il retrouve les providers déclarés, les définitions de variables, les `locals`, les ressources, les outputs, et construit un arbre de dépendances pour savoir dans quel ordre il faut procéder
 - **Conclusion:** on peut tout écrire dans 1 seul fichier `.tf`, **mais** on préférera répartir les éléments dans des fichiers avec des noms qui ont du sens
 
 ---
@@ -687,20 +717,37 @@ Crée un plan d'exécution.
 - `+` : Ressource créée
 - `-` : Ressource détruite
 - `~` : Ressource modifiée
-- `-/+` : Ressource remplacée
+- `-/+` : Ressource remplacée (destruction puis création)
+- `+/-` : Ressource remplacée (création avant destruction, `create_before_destroy`)
+- `<=` : Lecture d'une data source
 
 ---
+
+<style scoped>
+section { font-size: 24px; }
+</style>
 
 ## Exemple de sortie de plan
 
 ```
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+
 Terraform will perform the following actions:
 
   # aws_instance.web will be created
   + resource "aws_instance" "web" {
-      + ami           = "ami-0c55b159cbfafe1f0"
-      + instance_type = "t2.micro"
-      + id            = (known after apply)
+      + ami                                  = "ami-0c02fb55956c7d316"
+      + arn                                  = (known after apply)
+      + associate_public_ip_address          = (known after apply)
+      + availability_zone                    = (known after apply)
+      ...
+      + id                                   = (known after apply)
+      + instance_type                        = "t2.micro"
+      ...
+      + vpc_security_group_ids               = (known after apply)
+      ...
     }
 
 Plan: 1 to add, 0 to change, 0 to destroy.
@@ -769,7 +816,44 @@ terraform state mv aws_instance.old aws_instance.new
 ```
 
 <!--
-le state mv sert quand on renomme une ressource dans le code tf
+Ces commandes modifient le state immédiatement, hors plan/apply, sans trace dans Git.
+Elles restent utiles en dépannage. Pour renommer ou retirer, préférer les blocs moved / removed (slide suivante).
+-->
+
+---
+
+<style scoped>
+section { font-size: 22px; }
+</style>
+
+## Renommer ou retirer : blocs `moved` et `removed`
+
+Méthode recommandée : déclarer l'intention dans le code. Le changement passe par `plan` / `apply` et reste dans Git.
+
+```hcl
+# Renommer
+moved {
+  from = aws_instance.old
+  to   = aws_instance.new
+}
+
+# Retirer du state sans détruire la ressource
+removed {
+  from = aws_instance.web
+
+  lifecycle {
+    destroy = false
+  }
+}
+```
+
+- `plan` affiche le déplacement ou le retrait avant toute modification du state
+- Le bloc `moved` peut être conservé pour les autres utilisateurs du même code
+- Sans `destroy = false`, le bloc `removed` détruit la ressource réelle
+
+<!--
+state mv / state rm : modification immédiate du state, pas de relecture possible, pas d'historique.
+moved / removed : relisibles en code review, appliqués par tous les environnements (workspaces, collègues) au prochain apply.
 -->
 
 ---
@@ -780,12 +864,20 @@ le state mv sert quand on renomme une ressource dans le code tf
 # Afficher l'état actuel
 terraform show
 
-# Sync avec l'infra réelle
-terraform refresh
+# Voir l'écart avec l'infra réelle, sans rien écrire
+terraform plan -refresh-only
+
+# Mettre à jour l'état avec l'infra réelle
+terraform apply -refresh-only
 
 # Créer un graphe
 terraform graph | dot -Tpng > graph.png
 ```
+
+<!--
+terraform refresh est déprécié depuis 0.15.4 : il écrase l'état sans confirmation, dangereux si les identifiants du provider sont mal configurés.
+plan et apply font déjà un refresh par défaut ; -refresh-only sert à ne synchroniser que l'état, sans toucher à l'infra.
+-->
 
 ---
 
@@ -813,6 +905,7 @@ modules/
 ## Définition de module
 
 ```hcl
+# modules/vpc/main.tf
 resource "aws_vpc" "main" {
   cidr_block = var.vpc_cidr
 
@@ -826,6 +919,24 @@ resource "aws_subnet" "public" {
   cidr_block = var.public_subnet_cidr
 }
 ```
+
+---
+
+## Entrées et sorties du module
+
+```hcl
+# modules/vpc/variables.tf
+variable "vpc_name" { type = string }
+variable "vpc_cidr" { type = string }
+variable "public_subnet_cidr" { type = string }
+
+# modules/vpc/outputs.tf
+output "public_subnet_id" {
+  value = aws_subnet.public.id
+}
+```
+
+Les variables sont les paramètres du module, les outputs sont les seules valeurs lisibles depuis l'extérieur (`module.vpc.public_subnet_id`).
 
 ---
 
@@ -898,6 +1009,9 @@ resource "aws_instance" "web" {
   grid-template-columns: 1fr 1fr;
   gap: 2rem;
 }
+.columns > div:last-child pre {
+  font-size: 16px;
+}
 </style>
 
 ## Exemple : Variables vs Locals
@@ -938,11 +1052,20 @@ locals {
 resource "aws_s3_bucket" "data" {
   bucket = "<span class="highlight-green">${</span><span class="highlight-red">local</span>.<span class="highlight-blue">name_prefix</span><span class="highlight-green">}</span>-data"
   tags   = <span class="highlight-red">local</span>.<span class="highlight-blue">common_tags</span>
+
+  # timestamp() change à chaque plan
+  lifecycle {
+    ignore_changes = [tags["CreatedAt"]]
+  }
 }
 
 resource "aws_s3_bucket" "logs" {
   bucket = "<span class="highlight-green">${</span><span class="highlight-red">local</span>.<span class="highlight-blue">name_prefix</span><span class="highlight-green">}</span>-logs"
   tags   = local.common_tags
+
+  lifecycle {
+    ignore_changes = [tags["CreatedAt"]]
+  }
 }
 </pre>
 ⚠️ ```local``` sans 's' ⚠️
@@ -1020,6 +1143,10 @@ variable "ingress_rules" {
 
 ---
 
+<style scoped>
+section { font-size: 22px; }
+</style>
+
 ## Blocs dynamiques : Utilisation
 
 ```hcl
@@ -1037,6 +1164,7 @@ resource "aws_security_group" "web" {
   }
 }
 ```
+⚠️ Exemple illustratif de `dynamic`. Le provider AWS recommande désormais des ressources séparées `aws_vpc_security_group_ingress_rule` (avec `for_each`) plutôt que des blocs `ingress` inline.
 
 ---
 
@@ -1062,9 +1190,8 @@ terraform workspace select dev
 
 ```hcl
 resource "aws_instance" "web" {
-  ami = var.ami_id
-  instance_type = terraform.workspace == "prod" ? \
-                  "t2.large" : "t2.micro"
+  ami           = var.ami_id
+  instance_type = terraform.workspace == "prod" ? "t2.large" : "t2.micro"
 
   tags = {
     Name        = "web-${terraform.workspace}"
@@ -1085,25 +1212,54 @@ Partager des données entre projets Terraform distincts mais dépendants.
 
 ---
 
+<style scoped>
+section { font-size: 22px; }
+.columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+</style>
+
 ## Exemple : Remote State avec S3
 
 **Projet A** (stocke son state dans S3)
+
+<div class="columns">
+<div>
 
 ```hcl
 # Configuration du backend S3 pour stocker le state
 terraform {
   backend "s3" {
-    bucket = "mon-bucket-terraform-state"
-    key    = "network/terraform.tfstate"
-    region = "us-east-1"
+    bucket       = "mon-bucket-terraform-state"
+    key          = "network/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
   }
 }
 
 # Création du VPC
-resource "aws_vpc" "main" { cidr_block = "10.0.0.0/16" ; tags = { Name = "vpc-principal" } }
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
 
+  tags = {
+    Name = "vpc-principal"
+  }
+}
+```
+
+</div>
+<div>
+
+```hcl
 resource "aws_subnet" "public" {
-  vpc_id = aws_vpc.main.id ; cidr_block = "10.0.1.0/24" ; tags = { Name = "subnet-public" }
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.1.0/24"
+
+  tags = {
+    Name = "subnet-public"
+  }
 }
 
 # Exporter les valeurs pour les autres projets
@@ -1111,6 +1267,9 @@ output "vpc_id" { value = aws_vpc.main.id }
 
 output "subnet_id" { value = aws_subnet.public.id }
 ```
+
+</div>
+</div>
 
 ---
 
@@ -1149,25 +1308,31 @@ resource "aws_instance" "web" {
 
 ---
 
+<style scoped>
+section { font-size: 24px; }
+</style>
+
 ## OpenTofu
 
 Fork open-source de Terraform créé suite au changement de licence de Terraform.
 
 **Points clés :**
-- 100% compatible avec Terraform
+- Compatible avec Terraform 1.5 ; les deux projets divergent depuis
 - Même syntaxe HCL
+- Chiffrement du state et des plans, propre à OpenTofu
+- Registre de providers distinct de celui de Terraform
 - Géré par la communauté
 - Vraiment open source
 
-🔍 En fait le changement de licence impacte peu de monde et ne concerne que les entreprises qui vendent une solution d'infrastructure ou de gestion de cloud intégrant Terraform. Quelques sociétés concernées : Pulumi, Spacelift, Scalr, Aiven
+🔍 En fait le changement de licence impacte peu de monde et ne concerne que les entreprises qui vendent une solution d'infrastructure ou de gestion de cloud intégrant Terraform. Quelques sociétés concernées : Gruntwork, Spacelift, env0, Harness, Scalr
 
 ---
 
 ## Ressources
 
-- **Documentation** : terraform.io/docs
+- **Documentation** : https://developer.hashicorp.com/terraform/docs
 - **Terraform Registry** : registry.terraform.io
 - **Provider AWS** : registry.terraform.io/providers/hashicorp/aws
-- **HashiCorp Learn** : learn.hashicorp.com
+- **HashiCorp Learn** : https://developer.hashicorp.com/terraform/tutorials
 - **Communauté** : discuss.hashicorp.com
 

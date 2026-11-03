@@ -69,7 +69,7 @@ Amazon S3 (Simple Storage Service) est le service de stockage objet d'AWS. C'est
    - Le provider AWS (https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
    - Le provider random (comme dans l'exercice précédent)
 
-3. Configurez le provider AWS pour utiliser la région `us-east-1` (Paris) ou la même région que l'EC2 qui vous sert de passerelle.
+3. Configurez le provider AWS pour utiliser la région `us-east-1` (Virginie du Nord) ou la même région que l'EC2 qui vous sert de passerelle.
 
 4. Créez une ressource `random_id` avec `byte_length = 4` pour générer un suffixe
 
@@ -187,6 +187,12 @@ terraform show
 aws s3 rm s3://$(terraform output -raw bucket_name)/test.txt
 ```
 
+   Le versioning est activé depuis la partie 3 : `aws s3 rm` ne supprime que la version courante et pose un marqueur de suppression. Les anciennes versions restent dans le bucket, et `terraform destroy` peut échouer avec `BucketNotEmpty`.
+
+   Pour être sûr de bien vider le bucket, passez par la console AWS : dans S3, cliquez sur le bouton radio à côté du bucket, puis sur **Vider** (**Empty**), et confirmez. Toutes les versions et tous les marqueurs de suppression sont effacés.
+
+   Autre possibilité : créer le bucket avec l'argument `force_destroy = true` dans la ressource `aws_s3_bucket`. Au `destroy`, Terraform supprime alors tous les objets du bucket, anciennes versions comprises, avant le bucket lui-même. Si vous ajoutez l'argument à un bucket déjà créé, faites un `terraform apply` avant le `terraform destroy` : l'argument n'est pris en compte qu'une fois enregistré dans le state. À réserver aux buckets de test, car les données sont effacées sans confirmation supplémentaire.
+
 2. Détruisez toutes les ressources :
 ```bash
 terraform destroy
@@ -235,5 +241,5 @@ Vos credentials AWS n'ont pas les permissions nécessaires. Vérifiez vos polici
 Vérifiez votre fichier `~/.aws/credentials` ou vos variables d'environnement.
 
 ### Erreur lors du destroy : "BucketNotEmpty"
-Vous devez vider le bucket avant de le détruire. Utilisez `aws s3 rm --recursive`.
+Vous devez vider le bucket avant de le détruire. Avec le versioning, `aws s3 rm --recursive` ne suffit pas : il laisse les anciennes versions. Videz le bucket depuis la console AWS (bouton radio à côté du bucket, puis **Vider** / **Empty**), ou utilisez `force_destroy = true` comme décrit dans la partie 7.
 
