@@ -24,5 +24,5 @@ Les exercices se construisent progressivement les uns sur les autres. Complétez
 * Exercice 09 : Workspaces pour gérer plusieurs environnements avec le même code
 * Exercice 10 : Remote state avec un backend S3
 * Exercice 11 : `terraform import` pour reprendre un bucket S3 créé manuellement
-* Exercice 99 : Guide de référence. La pratique des modules, des workspaces, du remote state et de l'import est dans les exercices 08 à 11 ; ce guide en garde le complément, plus les fonctions, les provisioners, Ansible, les tests et les outils
+* Exercice 99 : Guide de référence sur des concepts avancés de Terraform : modules distants, backend partiel, structures de données et fonctions, provisioners, intégration avec Ansible, tests et outils de validation
 
