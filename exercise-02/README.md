@@ -1,116 +1,176 @@
 # Exercice 2 : Premier déploiement sur AWS avec S3
 
-## Objectifs pédagogiques
+## Objectifs
 
 - Configurer l'authentification AWS pour Terraform
-- Déployer sa première ressource cloud réelle sur AWS
+- Déployer une première ressource cloud réelle sur AWS
 - Comprendre l'importance des noms de ressources globalement uniques
-- Découvrir la gestion des tags pour organiser les ressources
+- Utiliser les tags pour organiser les ressources
 - Observer les différences entre le provider random et un provider cloud
+
+---
 
 ## Prérequis
 
-<!-- ### 1. Compte AWS -->
-
- <!-- Deux options : -->
-
-<!-- **Option A : AWS Academy (recommandée pour les étudiants)** -->
-- Connectez-vous à AWS Academy
-- Lancez votre Learner Lab
-- Cliquez sur "AWS Details" puis "Show" à côté de "AWS CLI"
-- Copiez les credentials (aws_access_key_id, aws_secret_access_key, aws_session_token)
-
-<!-- **Option B : Compte AWS personnel**
-- Créez un utilisateur IAM avec les permissions S3
-- Générez des access keys pour ce compte -->
-<!-- 
-### 2. Configuration des credentials AWS
-
-Créez le fichier `~/.aws/credentials` :
+Credentials AWS Academy copiés depuis "AWS Details" > "AWS CLI" dans `~/.aws/credentials` :
 
 ```ini
 [default]
-aws_access_key_id = VOTRE_ACCESS_KEY
-aws_secret_access_key = VOTRE_SECRET_KEY
-aws_session_token = VOTRE_TOKEN  # Seulement pour AWS Academy
+aws_access_key_id = ...
+aws_secret_access_key = ...
+aws_session_token = ...
 ```
 
-Créez le fichier `~/.aws/config` :
+Ces credentials expirent à la fin de la session du Learner Lab et doivent être recopiés à chaque nouvelle session.
 
-```ini
-[default]
-region = us-east-1
-output = json
-```
-
-### 3. Vérification -->
-
-Testez votre configuration :
+Vérification :
 
 ```bash
 aws s3 ls
 ```
 
-Si la commande fonctionne sans erreur, vous êtes prêt !
+---
 
-## Contexte
+## Note importante : limitation du Learner Lab
 
-Amazon S3 (Simple Storage Service) est le service de stockage objet d'AWS. C'est l'une des ressources AWS les plus simples à créer avec Terraform car elle ne nécessite pas de configuration réseau complexe.
+Dans l'environnement AWS Academy Learner Lab, la ressource `aws_s3_bucket` ne fonctionne pas :
 
-**Point important** : Les noms de buckets S3 doivent être **globalement uniques** dans toute l'infrastructure AWS mondiale. C'est pourquoi nous utiliserons le provider `random` pour générer un suffixe unique.
+```
+Error: reading S3 Bucket (...) object lock configuration:
+AccessDenied: ... is not authorized to perform: s3:GetBucketObjectLockConfiguration
+... with an explicit deny in a service control policy
+```
 
-## Instructions
+**Explication :** après la création du bucket (et à chaque `plan`), le provider AWS relit toute la configuration du bucket, dont la configuration Object Lock. Cette action est interdite par une Service Control Policy de l'organisation AWS Academy. Une SCP s'applique à tout le compte : aucune permission IAM ni option Terraform ne permet de la contourner. Le bucket est bien créé sur AWS, mais Terraform plante juste après et ne peut plus faire de `plan` tant que le bucket est dans le state.
 
-### Partie 1 : Configuration de base
+Le problème est le même avec les versions 5.x et 6.x du provider AWS.
 
-1. Dans le dossier `exercise-02/`, créez un fichier `main.tf`
+**Contournement retenu :** le bucket est créé par une stack CloudFormation gérée par Terraform (`aws_cloudformation_stack`). Terraform ne lit alors que la stack, pas la configuration S3 du bucket. Le versioning et le chiffrement restent gérés par les ressources Terraform natives demandées dans l'énoncé (`aws_s3_bucket_versioning` et `aws_s3_bucket_server_side_encryption_configuration`), qui ne lisent que leur propre configuration.
 
-2. Configurez les providers nécessaires :
-   - Le provider AWS (https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
-   - Le provider random (comme dans l'exercice précédent)
+Nettoyage effectué après les essais ratés :
 
-3. Configurez le provider AWS pour utiliser la région `us-east-1` (Virginie du Nord) ou la même région que l'EC2 qui vous sert de passerelle.
+```bash
+terraform state rm aws_s3_bucket.bucket
+aws s3 rb s3://mon-bucket-terraform-<suffixe> --force
+```
 
-4. Créez une ressource `random_id` avec `byte_length = 4` pour générer un suffixe
+---
 
-### Partie 2 : Création du bucket S3
+## Partie 1 : Configuration de base
 
-1. Créez une ressource `aws_s3_bucket` :
-   - Utilisez un nom de bucket qui combine un préfixe de votre choix avec le suffixe aléatoire
-   - Exemple : `"mon-bucket-terraform-${random_id.suffix.hex}"`
-   - Ajoutez des tags pertinents (Name, Environment, ManagedBy)
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
+  }
+}
 
-2. Ajoutez un output pour afficher le nom du bucket créé
+provider "aws" {
+  region = "us-east-1"
+}
 
-3. Initialisez et appliquez :
+# Suffixe aléatoire pour rendre le nom du bucket unique
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+```
+
+Avec `byte_length = 4`, `random_id.suffix.hex` donne 8 caractères hexadécimaux (ex : `7210a020`).
+
+---
+
+## Partie 2 : Création du bucket S3
+
+### Version attendue par l'énoncé (bloquée dans le Learner Lab)
+
+```hcl
+resource "aws_s3_bucket" "bucket" {
+  bucket = "mon-bucket-terraform-${random_id.suffix.hex}"
+
+  tags = {
+    Name        = "Mon bucket Terraform"
+    Environment = "Dev"
+    ManagedBy   = "Terraform"
+  }
+}
+
+output "bucket_name" {
+  value = aws_s3_bucket.bucket.bucket
+}
+```
+
+### Version utilisée (contournement CloudFormation)
+
+```hcl
+locals {
+  bucket_name = "mon-bucket-terraform-${random_id.suffix.hex}"
+}
+
+# aws_s3_bucket est bloqué dans le Learner Lab
+# (s3:GetBucketObjectLockConfiguration interdit par une SCP).
+# Le bucket est donc créé via une stack CloudFormation gérée par Terraform.
+resource "aws_cloudformation_stack" "bucket" {
+  name = "bucket-${random_id.suffix.hex}"
+
+  template_body = jsonencode({
+    Resources = {
+      Bucket = {
+        Type = "AWS::S3::Bucket"
+        Properties = {
+          BucketName = local.bucket_name
+          Tags = [
+            { Key = "Name", Value = "Mon bucket Terraform" },
+            { Key = "Environment", Value = "Dev" },
+            { Key = "ManagedBy", Value = "Terraform" }
+          ]
+        }
+      }
+    }
+    Outputs = {
+      BucketName = { Value = { Ref = "Bucket" } }
+      BucketArn  = { Value = { "Fn::GetAtt" = ["Bucket", "Arn"] } }
+    }
+  })
+}
+
+output "bucket_name" {
+  value = aws_cloudformation_stack.bucket.outputs["BucketName"]
+}
+```
+
+### Déploiement et vérification
+
 ```bash
 terraform init
 terraform plan
 terraform apply
-```
-
-4. Vérifiez dans la console AWS ou via la CLI que votre bucket existe :
-```bash
 aws s3 ls | grep terraform
 ```
 
-### Partie 3 : Configuration avancée du bucket
+Le bucket `mon-bucket-terraform-<suffixe>` apparaît dans la liste.
 
-1. Activez le versioning sur votre bucket en ajoutant une ressource `aws_s3_bucket_versioning` :
+---
+
+## Partie 3 : Configuration avancée du bucket
+
 ```hcl
 resource "aws_s3_bucket_versioning" "my_bucket_versioning" {
-  bucket = aws_s3_bucket.VOTRE_BUCKET.id
+  bucket = aws_cloudformation_stack.bucket.outputs["BucketName"]
 
   versioning_configuration {
     status = "Enabled"
   }
 }
-```
 
-2. Ajoutez le chiffrement par défaut avec une ressource `aws_s3_bucket_server_side_encryption_configuration` :
-```hcl
 resource "aws_s3_bucket_server_side_encryption_configuration" "encryption" {
-  bucket = aws_s3_bucket.VOTRE_BUCKET.id
+  bucket = aws_cloudformation_stack.bucket.outputs["BucketName"]
 
   rule {
     apply_server_side_encryption_by_default {
@@ -120,126 +180,284 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "encryption" {
 }
 ```
 
-3. Appliquez les changements :
-```bash
-terraform plan
-terraform apply
+Dans la version de l'énoncé, `bucket = aws_s3_bucket.bucket.id`.
+
+### Observation du plan
+
+```
+Plan: 2 to add, 0 to change, 0 to destroy.
 ```
 
-4. Observez que Terraform ne recrée pas le bucket, il le modifie (symbole `~` dans le plan)
+**Le bucket n'est pas recréé.** Il n'apparaît même pas dans le plan : il n'est pas touché. Depuis la version 4 du provider AWS, le versioning et le chiffrement ne sont plus des arguments du bucket mais des **ressources séparées**. Le plan montre donc 2 nouvelles ressources (symbole `+`) rattachées au bucket existant, et non une modification du bucket (`~`). Côté AWS, le résultat est bien une modification de la configuration du bucket, sans destruction ni recréation, et donc sans perte de données.
 
-### Partie 4 : Ajouter des outputs
+Le symbole `~` (modification sur place) apparaîtrait par exemple si on changeait un tag du bucket.
 
-Ajoutez des outputs pour afficher :
-- Le nom du bucket
-- L'ARN du bucket (Amazon Resource Name)
-- La région du bucket
+---
 
-Affichez les outputs :
+## Partie 4 : Outputs
+
+```hcl
+output "suffix" {
+  value = random_id.suffix.hex
+}
+
+output "bucket_name" {
+  value = aws_cloudformation_stack.bucket.outputs["BucketName"]
+}
+
+output "bucket_arn" {
+  value = aws_cloudformation_stack.bucket.outputs["BucketArn"]
+}
+
+output "bucket_region" {
+  value = "us-east-1"
+}
+
+output "versioning_status" {
+  value = aws_s3_bucket_versioning.my_bucket_versioning.versioning_configuration[0].status
+}
+```
+
+Dans la version de l'énoncé :
+
+```hcl
+output "bucket_name" {
+  value = aws_s3_bucket.bucket.bucket
+}
+
+output "bucket_arn" {
+  value = aws_s3_bucket.bucket.arn
+}
+
+output "bucket_region" {
+  value = aws_s3_bucket.bucket.bucket_region
+}
+```
+
 ```bash
 terraform output
 ```
 
-### Partie 5 : Tester l'upload d'un fichier
-
-0. Lisez l'aide de la commande `output` :
-```bash
-terraform output -help
+```
+bucket_arn        = "arn:aws:s3:::mon-bucket-terraform-xxxxxxxx"
+bucket_name       = "mon-bucket-terraform-xxxxxxxx"
+bucket_region     = "us-east-1"
+suffix            = "xxxxxxxx"
+versioning_status = "Enabled"
 ```
 
-1. Créez un fichier de test local :
+Un nouvel output n'apparaît dans `terraform output` qu'après un `terraform apply` : la commande lit le state, elle ne recalcule rien.
+
+---
+
+## Partie 5 : Upload d'un fichier
+
+### `terraform output -help`
+
+Options principales :
+- `-raw` : affiche la valeur brute, sans guillemets. Indispensable pour utiliser un output dans une commande shell
+- `-json` : affiche les outputs au format JSON (pratique pour les scripts et `jq`)
+- `-no-color` : désactive les couleurs
+- `-state=chemin` : lit un autre fichier de state
+
+Sans `-raw`, `terraform output bucket_name` renvoie `"mon-bucket-..."` avec les guillemets, et la commande `aws s3 cp` échouerait.
+
+### Tests
+
 ```bash
 echo "Hello from Terraform!" > test.txt
-```
 
-1. Uploadez-le dans votre bucket :
-```bash
 aws s3 cp test.txt s3://$(terraform output -raw bucket_name)/
-```
-
-1. Listez le contenu de votre bucket :
-```bash
 aws s3 ls s3://$(terraform output -raw bucket_name)/
-```
 
-1. Téléchargez le fichier pour vérifier :
-```bash
 aws s3 cp s3://$(terraform output -raw bucket_name)/test.txt downloaded.txt
 cat downloaded.txt
 ```
 
-### Partie 6 : Observer le state
+Résultat : `Hello from Terraform!`. Le fichier a bien été stocké puis récupéré depuis le bucket.
 
-1. Examinez votre `terraform.tfstate` :
-   - Combien de ressources sont trackées ?
-   - Trouvez les métadonnées AWS (ARN, region, etc.)
-   - Comparez avec l'exercice 1 : quelles différences ?
+---
 
-2. Affichez le state de manière lisible :
+## Partie 6 : Le state
+
+### Nombre de ressources trackées
+
 ```bash
-terraform show
+terraform state list
 ```
 
-### Partie 7 : Destruction
+4 ressources :
+- `random_id.suffix`
+- `aws_cloudformation_stack.bucket` (ou `aws_s3_bucket.bucket` dans la version de l'énoncé)
+- `aws_s3_bucket_versioning.my_bucket_versioning`
+- `aws_s3_bucket_server_side_encryption_configuration.encryption`
 
-1. Avant de détruire, le bucket doit être vide. Supprimez le fichier test :
+Le fichier `test.txt` n'est pas dans le state : il a été uploadé avec la CLI, Terraform ne le connaît pas.
+
+### Métadonnées AWS
+
+On retrouve dans le state :
+- `provider` : `provider["registry.terraform.io/hashicorp/aws"]`
+- l'ARN du bucket (`arn:aws:s3:::mon-bucket-terraform-...`)
+- la région (`us-east-1`)
+- les tags (`tags` et `tags_all`)
+- pour la stack : son ID (ARN de la stack CloudFormation), son template, ses outputs
+- pour le bucket natif : `bucket_domain_name`, `bucket_regional_domain_name`, `hosted_zone_id`, etc.
+- le champ `dependencies` de chaque ressource
+
+### Comparaison avec l'exercice 1
+
+| | Exercice 1 (random) | Exercice 2 (AWS) |
+|---|---|---|
+| Où vivent les ressources | Uniquement dans le state | Sur AWS, le state n'en garde qu'une copie |
+| Attributs | Peu : la valeur générée et les arguments | Beaucoup : ARN, région, domaines, tags, IDs AWS |
+| Refresh | Rien à interroger | Terraform appelle les API AWS à chaque `plan` |
+| Identifiants | Générés localement | Attribués par AWS |
+| Dépendances | Aucune | `dependencies` vers le bucket et le `random_id` |
+
+### `terraform show`
+
+Affiche le contenu du state dans un format lisible (syntaxe proche du HCL) plutôt qu'en JSON brut, avec toutes les ressources et leurs attributs. Les valeurs `sensitive` sont masquées.
+
+---
+
+## Partie 7 : Destruction
+
+### Vider le bucket
+
+Avec le versioning activé, `aws s3 rm` ne supprime que la version courante et ajoute un marqueur de suppression. Les anciennes versions restent et `terraform destroy` échoue avec `BucketNotEmpty`.
+
+Solutions :
+- **Console AWS** : S3 > bouton radio à côté du bucket > **Vider** (Empty) > confirmer
+- **`force_destroy = true`** sur la ressource `aws_s3_bucket` (version de l'énoncé), suivi d'un `terraform apply` pour l'enregistrer dans le state avant le `destroy`. À réserver aux buckets de test
+- **En CLI**, en supprimant toutes les versions et tous les marqueurs :
+
 ```bash
-aws s3 rm s3://$(terraform output -raw bucket_name)/test.txt
+BUCKET=$(terraform output -raw bucket_name)
+
+aws s3api delete-objects --bucket $BUCKET --delete \
+  "$(aws s3api list-object-versions --bucket $BUCKET \
+  --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json)"
+
+aws s3api delete-objects --bucket $BUCKET --delete \
+  "$(aws s3api list-object-versions --bucket $BUCKET \
+  --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json)"
 ```
 
-   Le versioning est activé depuis la partie 3 : `aws s3 rm` ne supprime que la version courante et pose un marqueur de suppression. Les anciennes versions restent dans le bucket, et `terraform destroy` peut échouer avec `BucketNotEmpty`.
+Avec le contournement CloudFormation, `force_destroy` n'existe pas : il faut vider le bucket par la console ou la CLI.
 
-   Pour être sûr de bien vider le bucket, passez par la console AWS : dans S3, cliquez sur le bouton radio à côté du bucket, puis sur **Vider** (**Empty**), et confirmez. Toutes les versions et tous les marqueurs de suppression sont effacés.
+### Destruction
 
-   Autre possibilité : créer le bucket avec l'argument `force_destroy = true` dans la ressource `aws_s3_bucket`. Au `destroy`, Terraform supprime alors tous les objets du bucket, anciennes versions comprises, avant le bucket lui-même. Si vous ajoutez l'argument à un bucket déjà créé, faites un `terraform apply` avant le `terraform destroy` : l'argument n'est pris en compte qu'une fois enregistré dans le state. À réserver aux buckets de test, car les données sont effacées sans confirmation supplémentaire.
-
-2. Détruisez toutes les ressources :
 ```bash
 terraform destroy
-```
-
-3. Vérifiez que le bucket n'existe plus :
-```bash
 aws s3 ls | grep terraform
 ```
 
+Terraform détruit dans l'ordre inverse des dépendances : d'abord le chiffrement et le versioning, puis le bucket (ou la stack, qui supprime le bucket), et enfin le `random_id`. La dernière commande ne renvoie plus rien : le bucket n'existe plus.
+
+---
+
 ## Questions de réflexion
 
-1. **Unicité globale des noms**
-   - Pourquoi les buckets S3 doivent-ils avoir des noms globalement uniques ?
-   - Que se passerait-il si vous réutilisiez le même nom de bucket ?
-   - Pourquoi utiliser `random_id` au lieu de `random_pet` pour ce cas ?
+### 1. Unicité globale des noms
 
-2. **Dépendances implicites**
-   - Terraform a-t-il créé les ressources dans un ordre particulier ?
-   - Comment Terraform sait-il que `aws_s3_bucket_versioning` dépend du bucket ?
-   - Regardez dans le state : voyez-vous les dépendances ?
+**Pourquoi des noms globalement uniques ?** Les noms de buckets S3 partagent un espace de noms unique pour tous les comptes AWS du monde, toutes régions confondues. Le nom sert directement dans l'URL d'accès (`https://<bucket>.s3.amazonaws.com`) et donc dans le DNS. Deux buckets ne peuvent pas avoir la même adresse.
 
-3. **State et ressources cloud**
-   - Que contient le state pour une ressource AWS comparé à une ressource random ?
-   - Pourquoi le state contient-il l'ARN et d'autres métadonnées AWS ?
-   - Que se passerait-il si vous supprimiez manuellement le bucket dans la console AWS puis exécutiez `terraform plan` ?
+**Réutiliser le même nom :**
+- si le bucket appartient à quelqu'un d'autre : erreur `BucketAlreadyExists`
+- s'il nous appartient déjà : erreur `BucketAlreadyOwnedByYou`
+- après la suppression d'un bucket, le nom peut ne pas être réutilisable tout de suite
 
-4. **Ressources AWS vs Ressources Random**
-   - Quelle est la différence fondamentale entre créer une ressource `random_*` et une ressource `aws_*` ?
-   - Laquelle est plus "risquée" à manipuler ? Pourquoi ?
+Dans une promo où tout le monde suit le même énoncé, un nom fixe comme `mon-bucket-terraform` serait pris par le premier étudiant et ferait échouer tous les autres.
 
-5. **Tags et organisation**
-   - À quoi servent les tags dans AWS ?
-   - Comment pourriez-vous utiliser les tags pour organiser des ressources créées par différents projets Terraform ?
-   - Comment retrouver toutes les ressources avec le tag `ManagedBy = "Terraform"` dans AWS ?
+**`random_id` plutôt que `random_pet` :**
+- `random_id` produit uniquement des caractères hexadécimaux minuscules (0-9, a-f), toujours conformes aux règles de nommage S3 (minuscules, chiffres, tirets, 3 à 63 caractères)
+- la longueur est fixe et courte (8 caractères pour 4 octets), donc on maîtrise la longueur totale du nom
+- 4 octets donnent plus de 4 milliards de combinaisons, contre un nombre bien plus limité de combinaisons de mots pour `random_pet`, donc moins de risques de collision
+- `random_pet` produit des mots de longueur variable, adaptés pour un nom lisible par un humain (nom de serveur), moins pour un identifiant technique unique
 
-## Problèmes courants
+### 2. Dépendances implicites
 
-### Erreur : "BucketAlreadyExists"
-Le nom de bucket est déjà utilisé (par vous ou quelqu'un d'autre dans le monde). Changez le préfixe ou recréez le random_id.
+**Ordre de création :** oui. `random_id.suffix` d'abord, puis le bucket (son nom dépend du suffixe), puis le versioning et le chiffrement, créés en parallèle car ils ne dépendent que du bucket.
 
-### Erreur : "AccessDenied"
-Vos credentials AWS n'ont pas les permissions nécessaires. Vérifiez vos policies IAM.
+**Comment Terraform le sait :** grâce aux **références** dans le code. `bucket = aws_s3_bucket.bucket.id` (ou `aws_cloudformation_stack.bucket.outputs[...]`) indique que la ressource a besoin d'un attribut du bucket. Terraform construit un graphe de dépendances à partir de toutes ces références et l'utilise pour ordonner les créations, et l'inverse pour les destructions. Ces dépendances sont dites implicites, par opposition à `depends_on` qui les déclare explicitement.
 
-### Erreur : "AWS credentials not found"
-Vérifiez votre fichier `~/.aws/credentials` ou vos variables d'environnement.
+Le graphe peut être visualisé avec :
 
-### Erreur lors du destroy : "BucketNotEmpty"
-Vous devez vider le bucket avant de le détruire. Avec le versioning, `aws s3 rm --recursive` ne suffit pas : il laisse les anciennes versions. Videz le bucket depuis la console AWS (bouton radio à côté du bucket, puis **Vider** / **Empty**), ou utilisez `force_destroy = true` comme décrit dans la partie 7.
+```bash
+terraform graph
+```
 
+**Dans le state :** oui, chaque instance a un champ `dependencies` :
+
+```json
+"dependencies": [
+  "aws_cloudformation_stack.bucket",
+  "random_id.suffix"
+]
+```
+
+Terraform s'en sert notamment pour détruire dans le bon ordre, même si les ressources ont été retirées du code.
+
+### 3. State et ressources cloud
+
+**Contenu comparé :** une ressource random ne contient que la valeur générée et ses arguments. Une ressource AWS contient en plus tous les attributs renvoyés par AWS : ARN, région, IDs, noms de domaine, tags effectifs (`tags_all`), configuration complète.
+
+**Pourquoi l'ARN et les métadonnées :**
+- l'ARN identifie la ressource de manière unique dans AWS : Terraform s'en sert pour la relire, la modifier et la supprimer
+- les attributs servent de référence pour d'autres ressources (une policy IAM qui cible l'ARN du bucket, par exemple)
+- ils permettent de comparer l'état réel avec le code pour détecter les écarts (drift)
+- ils évitent de refaire des appels API pour connaître des valeurs déjà connues
+
+**Suppression manuelle dans la console puis `terraform plan` :** au refresh, Terraform interroge AWS et constate que le bucket n'existe plus. Il le retire du state et le plan propose de le **recréer** (`+`), ainsi que le versioning et le chiffrement. Le contenu du bucket, lui, est perdu définitivement : Terraform recrée un bucket vide.
+
+### 4. Ressources AWS vs ressources random
+
+**Différence fondamentale :** une ressource `random_*` est **purement logique**. Elle n'existe que dans le state, n'appelle aucune API externe, ne coûte rien et peut être recréée sans conséquence en dehors de Terraform. Une ressource `aws_*` crée une **vraie infrastructure** via les API AWS : elle existe indépendamment de Terraform, peut être modifiée par d'autres personnes, contient des données et génère des coûts.
+
+**La plus risquée :** les ressources AWS.
+- une destruction ou un remplacement efface de vraies données (souvent sans retour possible)
+- elles coûtent de l'argent tant qu'elles existent, y compris si on oublie de les détruire
+- une mauvaise configuration peut exposer des données (bucket public, par exemple)
+- elles dépendent de permissions, de quotas et de restrictions (comme la SCP du Learner Lab)
+- elles peuvent être modifiées hors Terraform, ce qui crée des écarts avec le state
+
+Et indirectement, une ressource random peut devenir risquée : si on remplace `random_id.suffix`, le nom du bucket change et Terraform remplace aussi le bucket.
+
+### 5. Tags et organisation
+
+**À quoi servent les tags :**
+- identifier et organiser les ressources (projet, environnement, propriétaire)
+- suivre et répartir les coûts (cost allocation tags dans la facturation)
+- automatiser (scripts de nettoyage, sauvegardes ciblées, arrêt des environnements de dev la nuit)
+- contrôler les accès avec des policies IAM basées sur les tags (ABAC)
+- savoir qui gère quoi : `ManagedBy = "Terraform"` indique qu'il ne faut pas modifier la ressource à la main
+
+**Organiser plusieurs projets Terraform :** définir des tags communs à chaque projet (`Project`, `Environment`, `Owner`, `ManagedBy`, éventuellement `Repository`) et les appliquer automatiquement à toutes les ressources du provider avec `default_tags` :
+
+```hcl
+provider "aws" {
+  region = "us-east-1"
+
+  default_tags {
+    tags = {
+      Project     = "ig2i-terraform"
+      Environment = "Dev"
+      ManagedBy   = "Terraform"
+      Owner       = "achrafe.nassiri"
+    }
+  }
+}
+```
+
+Chaque ressource peut ensuite ajouter ses propres tags (comme `Name`). C'est ce qui donne l'attribut `tags_all` dans le state : la fusion des `default_tags` et des tags de la ressource.
+
+**Retrouver les ressources `ManagedBy = "Terraform"` :**
+- **Console** : Resource Groups & Tag Editor > Tag Editor, recherche par tag dans toutes les régions et tous les types de ressources
+- **CLI** :
+
+```bash
+aws resourcegroupstaggingapi get-resources \
+  --tag-filters Key=ManagedBy,Values=Terraform \
+  --query "ResourceTagMappingList[].ResourceARN"
+```
