@@ -31,32 +31,7 @@ aws s3 ls
 
 ---
 
-## Note importante : limitation du Learner Lab
-
-Dans l'environnement AWS Academy Learner Lab, la ressource `aws_s3_bucket` ne fonctionne pas :
-
-```
-Error: reading S3 Bucket (...) object lock configuration:
-AccessDenied: ... is not authorized to perform: s3:GetBucketObjectLockConfiguration
-... with an explicit deny in a service control policy
-```
-
-**Explication :** après la création du bucket (et à chaque `plan`), le provider AWS relit toute la configuration du bucket, dont la configuration Object Lock. Cette action est interdite par une Service Control Policy de l'organisation AWS Academy. Une SCP s'applique à tout le compte : aucune permission IAM ni option Terraform ne permet de la contourner. Le bucket est bien créé sur AWS, mais Terraform plante juste après et ne peut plus faire de `plan` tant que le bucket est dans le state.
-
-Le problème est le même avec les versions 5.x et 6.x du provider AWS.
-
-**Contournement retenu :** le bucket est créé par une stack CloudFormation gérée par Terraform (`aws_cloudformation_stack`). Terraform ne lit alors que la stack, pas la configuration S3 du bucket. Le versioning et le chiffrement restent gérés par les ressources Terraform natives demandées dans l'énoncé (`aws_s3_bucket_versioning` et `aws_s3_bucket_server_side_encryption_configuration`), qui ne lisent que leur propre configuration.
-
-Nettoyage effectué après les essais ratés :
-
-```bash
-terraform state rm aws_s3_bucket.bucket
-aws s3 rb s3://mon-bucket-terraform-<suffixe> --force
-```
-
----
-
-## Partie 1 : Configuration de base
+## main.tf complet
 
 ```hcl
 terraform {
@@ -80,19 +55,10 @@ provider "aws" {
 resource "random_id" "suffix" {
   byte_length = 4
 }
-```
 
-Avec `byte_length = 4`, `random_id.suffix.hex` donne 8 caractères hexadécimaux (ex : `7210a020`).
-
----
-
-## Partie 2 : Création du bucket S3
-
-### Version attendue par l'énoncé (bloquée dans le Learner Lab)
-
-```hcl
 resource "aws_s3_bucket" "bucket" {
-  bucket = "mon-bucket-terraform-${random_id.suffix.hex}"
+  bucket        = "mon-bucket-terraform-${random_id.suffix.hex}"
+  force_destroy = true
 
   tags = {
     Name        = "Mon bucket Terraform"
@@ -101,68 +67,8 @@ resource "aws_s3_bucket" "bucket" {
   }
 }
 
-output "bucket_name" {
-  value = aws_s3_bucket.bucket.bucket
-}
-```
-
-### Version utilisée (contournement CloudFormation)
-
-```hcl
-locals {
-  bucket_name = "mon-bucket-terraform-${random_id.suffix.hex}"
-}
-
-# aws_s3_bucket est bloqué dans le Learner Lab
-# (s3:GetBucketObjectLockConfiguration interdit par une SCP).
-# Le bucket est donc créé via une stack CloudFormation gérée par Terraform.
-resource "aws_cloudformation_stack" "bucket" {
-  name = "bucket-${random_id.suffix.hex}"
-
-  template_body = jsonencode({
-    Resources = {
-      Bucket = {
-        Type = "AWS::S3::Bucket"
-        Properties = {
-          BucketName = local.bucket_name
-          Tags = [
-            { Key = "Name", Value = "Mon bucket Terraform" },
-            { Key = "Environment", Value = "Dev" },
-            { Key = "ManagedBy", Value = "Terraform" }
-          ]
-        }
-      }
-    }
-    Outputs = {
-      BucketName = { Value = { Ref = "Bucket" } }
-      BucketArn  = { Value = { "Fn::GetAtt" = ["Bucket", "Arn"] } }
-    }
-  })
-}
-
-output "bucket_name" {
-  value = aws_cloudformation_stack.bucket.outputs["BucketName"]
-}
-```
-
-### Déploiement et vérification
-
-```bash
-terraform init
-terraform plan
-terraform apply
-aws s3 ls | grep terraform
-```
-
-Le bucket `mon-bucket-terraform-<suffixe>` apparaît dans la liste.
-
----
-
-## Partie 3 : Configuration avancée du bucket
-
-```hcl
 resource "aws_s3_bucket_versioning" "my_bucket_versioning" {
-  bucket = aws_cloudformation_stack.bucket.outputs["BucketName"]
+  bucket = aws_s3_bucket.bucket.id
 
   versioning_configuration {
     status = "Enabled"
@@ -170,7 +76,7 @@ resource "aws_s3_bucket_versioning" "my_bucket_versioning" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "encryption" {
-  bucket = aws_cloudformation_stack.bucket.outputs["BucketName"]
+  bucket = aws_s3_bucket.bucket.id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -178,47 +84,97 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "encryption" {
     }
   }
 }
-```
 
-Dans la version de l'énoncé, `bucket = aws_s3_bucket.bucket.id`.
-
-### Observation du plan
-
-```
-Plan: 2 to add, 0 to change, 0 to destroy.
-```
-
-**Le bucket n'est pas recréé.** Il n'apparaît même pas dans le plan : il n'est pas touché. Depuis la version 4 du provider AWS, le versioning et le chiffrement ne sont plus des arguments du bucket mais des **ressources séparées**. Le plan montre donc 2 nouvelles ressources (symbole `+`) rattachées au bucket existant, et non une modification du bucket (`~`). Côté AWS, le résultat est bien une modification de la configuration du bucket, sans destruction ni recréation, et donc sans perte de données.
-
-Le symbole `~` (modification sur place) apparaîtrait par exemple si on changeait un tag du bucket.
-
----
-
-## Partie 4 : Outputs
-
-```hcl
 output "suffix" {
   value = random_id.suffix.hex
 }
 
 output "bucket_name" {
-  value = aws_cloudformation_stack.bucket.outputs["BucketName"]
+  value = aws_s3_bucket.bucket.bucket
 }
 
 output "bucket_arn" {
-  value = aws_cloudformation_stack.bucket.outputs["BucketArn"]
+  value = aws_s3_bucket.bucket.arn
 }
 
 output "bucket_region" {
-  value = "us-east-1"
-}
-
-output "versioning_status" {
-  value = aws_s3_bucket_versioning.my_bucket_versioning.versioning_configuration[0].status
+  value = aws_s3_bucket.bucket.bucket_region
 }
 ```
 
-Dans la version de l'énoncé :
+---
+
+## Partie 1 : Configuration de base
+
+- Provider `hashicorp/aws` en version `~> 6.0` et provider `hashicorp/random` en version `~> 3.6`
+- Provider AWS configuré sur la région `us-east-1`
+- `random_id.suffix` avec `byte_length = 4` : `random_id.suffix.hex` donne 8 caractères hexadécimaux (ex : `7210a020`)
+
+---
+
+## Partie 2 : Création du bucket S3
+
+Le nom du bucket combine un préfixe fixe et le suffixe aléatoire : `mon-bucket-terraform-${random_id.suffix.hex}`. Trois tags sont ajoutés : `Name`, `Environment` et `ManagedBy`.
+
+```bash
+terraform init
+terraform plan
+terraform apply
+```
+
+```
+Plan: 2 to add, 0 to change, 0 to destroy.
+...
+random_id.suffix: Creation complete after 0s
+aws_s3_bucket.bucket: Creation complete after 2s [id=mon-bucket-terraform-xxxxxxxx]
+
+Apply complete! Resources: 2 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+bucket_name = "mon-bucket-terraform-xxxxxxxx"
+```
+
+Vérification :
+
+```bash
+aws s3 ls | grep terraform
+```
+
+Le bucket `mon-bucket-terraform-xxxxxxxx` apparaît dans la liste.
+
+---
+
+## Partie 3 : Configuration avancée du bucket
+
+Ajout des ressources `aws_s3_bucket_versioning` et `aws_s3_bucket_server_side_encryption_configuration` (voir `main.tf`).
+
+```bash
+terraform plan
+terraform apply
+```
+
+```
+Plan: 2 to add, 0 to change, 0 to destroy.
+```
+
+**Le bucket n'est pas recréé**, il n'est même pas listé dans le plan. Depuis la version 4 du provider AWS, le versioning et le chiffrement ne sont plus des arguments du bucket mais des **ressources séparées** rattachées au bucket. Le plan affiche donc 2 nouvelles ressources (`+`), et le bucket existant n'est pas touché. Côté AWS, le résultat est bien une modification de la configuration du bucket, sans destruction ni recréation, et donc sans perte de données.
+
+Le symbole `~` (modification sur place) apparaît quand on modifie un argument du bucket lui-même, par exemple un tag :
+
+```
+  ~ resource "aws_s3_bucket" "bucket" {
+      ~ tags = {
+          ~ "Environment" = "Dev" -> "Test"
+        }
+    }
+
+Plan: 0 to add, 1 to change, 0 to destroy.
+```
+
+---
+
+## Partie 4 : Outputs
 
 ```hcl
 output "bucket_name" {
@@ -234,16 +190,17 @@ output "bucket_region" {
 }
 ```
 
+`bucket_region` donne la région réelle du bucket, alors que l'attribut `region` correspond à la région configurée dans le provider.
+
 ```bash
 terraform output
 ```
 
 ```
-bucket_arn        = "arn:aws:s3:::mon-bucket-terraform-xxxxxxxx"
-bucket_name       = "mon-bucket-terraform-xxxxxxxx"
-bucket_region     = "us-east-1"
-suffix            = "xxxxxxxx"
-versioning_status = "Enabled"
+bucket_arn    = "arn:aws:s3:::mon-bucket-terraform-xxxxxxxx"
+bucket_name   = "mon-bucket-terraform-xxxxxxxx"
+bucket_region = "us-east-1"
+suffix        = "xxxxxxxx"
 ```
 
 Un nouvel output n'apparaît dans `terraform output` qu'après un `terraform apply` : la commande lit le state, elle ne recalcule rien.
@@ -288,7 +245,7 @@ terraform state list
 
 4 ressources :
 - `random_id.suffix`
-- `aws_cloudformation_stack.bucket` (ou `aws_s3_bucket.bucket` dans la version de l'énoncé)
+- `aws_s3_bucket.bucket`
 - `aws_s3_bucket_versioning.my_bucket_versioning`
 - `aws_s3_bucket_server_side_encryption_configuration.encryption`
 
@@ -298,11 +255,11 @@ Le fichier `test.txt` n'est pas dans le state : il a été uploadé avec la CLI,
 
 On retrouve dans le state :
 - `provider` : `provider["registry.terraform.io/hashicorp/aws"]`
-- l'ARN du bucket (`arn:aws:s3:::mon-bucket-terraform-...`)
-- la région (`us-east-1`)
-- les tags (`tags` et `tags_all`)
-- pour la stack : son ID (ARN de la stack CloudFormation), son template, ses outputs
-- pour le bucket natif : `bucket_domain_name`, `bucket_regional_domain_name`, `hosted_zone_id`, etc.
+- `arn` : `arn:aws:s3:::mon-bucket-terraform-...`
+- `region` et `bucket_region` : `us-east-1`
+- `bucket_domain_name`, `bucket_regional_domain_name`, `hosted_zone_id`
+- `tags` et `tags_all`
+- `force_destroy`, `object_lock_enabled`, `request_payer`, etc.
 - le champ `dependencies` de chaque ressource
 
 ### Comparaison avec l'exercice 1
@@ -325,26 +282,15 @@ Affiche le contenu du state dans un format lisible (syntaxe proche du HCL) plut�
 
 ### Vider le bucket
 
-Avec le versioning activé, `aws s3 rm` ne supprime que la version courante et ajoute un marqueur de suppression. Les anciennes versions restent et `terraform destroy` échoue avec `BucketNotEmpty`.
+```bash
+aws s3 rm s3://$(terraform output -raw bucket_name)/test.txt
+```
+
+Avec le versioning activé, `aws s3 rm` ne supprime que la version courante et ajoute un marqueur de suppression. Les anciennes versions restent et `terraform destroy` échouerait avec `BucketNotEmpty`.
 
 Solutions :
 - **Console AWS** : S3 > bouton radio à côté du bucket > **Vider** (Empty) > confirmer
-- **`force_destroy = true`** sur la ressource `aws_s3_bucket` (version de l'énoncé), suivi d'un `terraform apply` pour l'enregistrer dans le state avant le `destroy`. À réserver aux buckets de test
-- **En CLI**, en supprimant toutes les versions et tous les marqueurs :
-
-```bash
-BUCKET=$(terraform output -raw bucket_name)
-
-aws s3api delete-objects --bucket $BUCKET --delete \
-  "$(aws s3api list-object-versions --bucket $BUCKET \
-  --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json)"
-
-aws s3api delete-objects --bucket $BUCKET --delete \
-  "$(aws s3api list-object-versions --bucket $BUCKET \
-  --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json)"
-```
-
-Avec le contournement CloudFormation, `force_destroy` n'existe pas : il faut vider le bucket par la console ou la CLI.
+- **`force_destroy = true`** sur la ressource `aws_s3_bucket` (choix fait dans ce `main.tf`) : au `destroy`, Terraform supprime tous les objets, anciennes versions comprises, avant le bucket. S'il est ajouté sur un bucket existant, il faut faire un `terraform apply` avant le `destroy` pour qu'il soit enregistré dans le state. À réserver aux buckets de test
 
 ### Destruction
 
@@ -353,7 +299,13 @@ terraform destroy
 aws s3 ls | grep terraform
 ```
 
-Terraform détruit dans l'ordre inverse des dépendances : d'abord le chiffrement et le versioning, puis le bucket (ou la stack, qui supprime le bucket), et enfin le `random_id`. La dernière commande ne renvoie plus rien : le bucket n'existe plus.
+```
+Plan: 0 to add, 0 to change, 4 to destroy.
+...
+Destroy complete! Resources: 4 destroyed.
+```
+
+Terraform détruit dans l'ordre inverse des dépendances : d'abord le chiffrement et le versioning, puis le bucket, et enfin le `random_id`. La dernière commande ne renvoie plus rien : le bucket n'existe plus.
 
 ---
 
@@ -380,7 +332,7 @@ Dans une promo où tout le monde suit le même énoncé, un nom fixe comme `mon-
 
 **Ordre de création :** oui. `random_id.suffix` d'abord, puis le bucket (son nom dépend du suffixe), puis le versioning et le chiffrement, créés en parallèle car ils ne dépendent que du bucket.
 
-**Comment Terraform le sait :** grâce aux **références** dans le code. `bucket = aws_s3_bucket.bucket.id` (ou `aws_cloudformation_stack.bucket.outputs[...]`) indique que la ressource a besoin d'un attribut du bucket. Terraform construit un graphe de dépendances à partir de toutes ces références et l'utilise pour ordonner les créations, et l'inverse pour les destructions. Ces dépendances sont dites implicites, par opposition à `depends_on` qui les déclare explicitement.
+**Comment Terraform le sait :** grâce aux **références** dans le code. `bucket = aws_s3_bucket.bucket.id` indique que la ressource a besoin d'un attribut du bucket. Terraform construit un graphe de dépendances à partir de toutes ces références et l'utilise pour ordonner les créations, et l'inverse pour les destructions. Ces dépendances sont dites implicites, par opposition à `depends_on` qui les déclare explicitement.
 
 Le graphe peut être visualisé avec :
 
@@ -392,7 +344,7 @@ terraform graph
 
 ```json
 "dependencies": [
-  "aws_cloudformation_stack.bucket",
+  "aws_s3_bucket.bucket",
   "random_id.suffix"
 ]
 ```
@@ -419,7 +371,7 @@ Terraform s'en sert notamment pour détruire dans le bon ordre, même si les res
 - une destruction ou un remplacement efface de vraies données (souvent sans retour possible)
 - elles coûtent de l'argent tant qu'elles existent, y compris si on oublie de les détruire
 - une mauvaise configuration peut exposer des données (bucket public, par exemple)
-- elles dépendent de permissions, de quotas et de restrictions (comme la SCP du Learner Lab)
+- elles dépendent de permissions IAM et de quotas
 - elles peuvent être modifiées hors Terraform, ce qui crée des écarts avec le state
 
 Et indirectement, une ressource random peut devenir risquée : si on remplace `random_id.suffix`, le nom du bucket change et Terraform remplace aussi le bucket.
